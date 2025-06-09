@@ -416,3 +416,6 @@ AUTHENTICATION_BACKENDS = [
     'tenants.backends.TenantAwareBackend',
     'django.contrib.auth.backends.ModelBackend',
 ]
+
+# django-tenants required settings
+TENANT_MODEL = 'tenants.Tenant'

@@ -184,4 +184,22 @@ body {
 /* Fix for autocomplete fields */
 .admin-autocomplete {
     width: 100% !important;
+}
+
+/* Robust Jazzmin sidebar scroll fix */
+.main-sidebar,
+.sidebar,
+.sidebar-menu,
+.sidebar .sidebar-menu {
+    overflow-y: auto !important;
+    max-height: 100vh !important;
+    height: 100vh !important;
+    position: fixed !important;
+    left: 0;
+    top: 0;
+    bottom: 0;
+}
+.content-wrapper,
+.main-content {
+    margin-left: 250px !important; /* Adjust if your sidebar is a different width */
 } 

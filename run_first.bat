@@ -16,6 +16,7 @@ python -m pip install django-extensions==3.2.3
 python -m pip install channels==4.0.0
 python -m pip install daphne==4.0.0
 python -m pip install django-import-export==4.3.7
+python -m pip install django-tenants==3.8.0
 python -m pip install pip-review
 
 REM Verify installations

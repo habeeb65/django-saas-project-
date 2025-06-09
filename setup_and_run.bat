@@ -58,6 +58,7 @@ python -m pip install -r requirements.txt --no-deps
 REM Install core dependencies
 echo Installing core dependencies...
 python -m pip install Django==5.1.7
+python -m pip install django-tenants==3.8.0
 python -m pip install django-multitenant==2.3.0
 python -m pip install django-bootstrap5==23.3
 python -m pip install psycopg2-binary==2.9.10

@@ -20,6 +20,9 @@ from rest_framework.response import Response
 from .models import Tenant, UserProfile, TenantSettings
 from .forms import TenantRegistrationForm
 from Accounts.models import Product, Customer, PurchaseVendor
+from django_tenants.utils import get_tenant_domain_model
+from django.core.management import call_command
+from django.db import connection
 
 def tenant_not_found(request):
     """View for when a tenant is not found"""
@@ -321,3 +324,60 @@ def create_tenant_api(request):
         logging.error(f"Error creating tenant: {str(e)}")
         logging.error(traceback.format_exc())
         return Response({'error': str(e)}, status=400)
+
+def public_signup(request):
+    """Public-facing signup for new tenants (multi-tenant SaaS)"""
+    if request.method == 'POST':
+        form = TenantRegistrationForm(request.POST)
+        if form.is_valid():
+            # 1. Create the tenant
+            tenant = Tenant.objects.create(
+                name=form.cleaned_data['business_name'],
+                slug=form.cleaned_data['slug'],
+                business_type=form.cleaned_data['business_type'],
+                contact_email=form.cleaned_data['email'],
+            )
+
+            # 2. Create the domain
+            Domain = get_tenant_domain_model()
+            domain = Domain.objects.create(
+                domain=form.cleaned_data['domain'],
+                tenant=tenant,
+                is_primary=True
+            )
+
+            # 3. Run migrations for the new tenant schema
+            # (Assumes schema_name == slug)
+            try:
+                call_command('migrate_schemas', schema_name=tenant.slug, interactive=False, verbosity=0)
+            except Exception as e:
+                tenant.delete()
+                form.add_error(None, f"Error running migrations for new tenant: {e}")
+                return render(request, 'tenants/signup.html', {'form': form})
+
+            # 4. Create a superuser in the new tenant schema
+            # Switch to tenant context
+            connection.set_schema(tenant.slug)
+            admin_user = User.objects.create_superuser(
+                username=form.cleaned_data['username'],
+                email=form.cleaned_data['email'],
+                password=form.cleaned_data['password']
+            )
+            UserProfile.objects.create(
+                user=admin_user,
+                tenant=tenant,
+                is_tenant_admin=True
+            )
+            TenantSettings.objects.create(tenant=tenant)
+            # Optionally, create default data
+            setup_default_data(tenant)
+            # Switch back to public schema
+            connection.set_schema_to_public()
+
+            # 5. Redirect to the new domain's admin
+            admin_url = f"http://{domain.domain}:8000/admin/"
+            messages.success(request, f"Your business '{tenant.name}' has been created! You can now log in as admin.")
+            return redirect(admin_url)
+    else:
+        form = TenantRegistrationForm()
+    return render(request, 'tenants/signup.html', {'form': form})

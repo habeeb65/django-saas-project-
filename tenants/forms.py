@@ -31,6 +31,12 @@ class TenantRegistrationForm(forms.Form):
     confirm_password = forms.CharField(widget=forms.PasswordInput(), required=True,
                                      help_text="Confirm your password")
     
+    domain = forms.CharField(
+        max_length=255,
+        required=True,
+        help_text="Domain for your business (e.g. mango1.localhost or 127.0.0.1)",
+    )
+    
     def clean_slug(self):
         slug = self.cleaned_data.get('slug')
         if Tenant.objects.filter(slug=slug).exists():
@@ -48,6 +54,17 @@ class TenantRegistrationForm(forms.Form):
         if User.objects.filter(email=email).exists():
             raise forms.ValidationError("This email is already registered. Please use another.")
         return email
+    
+    def clean_domain(self):
+        domain = self.cleaned_data.get('domain')
+        try:
+            from django_tenants.utils import get_tenant_domain_model
+            Domain = get_tenant_domain_model()
+        except ImportError:
+            raise forms.ValidationError("Domain model not found. Is django-tenants installed?")
+        if Domain.objects.filter(domain=domain).exists():
+            raise forms.ValidationError("This domain is already in use. Please choose another.")
+        return domain
     
     def clean(self):
         cleaned_data = super().clean()
