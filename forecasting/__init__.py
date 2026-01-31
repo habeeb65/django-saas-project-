@@ -1,1 +1,0 @@
-# Forecasting app for Starmango

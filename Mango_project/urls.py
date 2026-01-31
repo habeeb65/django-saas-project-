@@ -25,10 +25,9 @@ from django.contrib.auth.decorators import login_required
 from Accounts import views 
 # Import the credit dashboard views
 from Accounts.admin import credit_dashboard_view, credit_report_view
-# Import analytics dashboard view
-from analytics.admin import analytics_dashboard_view
-# Import forecasting dashboard view
-from forecasting.admin import forecasting_dashboard_view
+# Analytics and forecasting dashboard views (disabled)
+# from analytics.admin import analytics_dashboard_view
+# from forecasting.admin import forecasting_dashboard_view
 
 def homepage(request):
     """Simple homepage with a redirect to admin"""
@@ -107,15 +106,16 @@ urlpatterns = [
     # Add credit dashboard URLs before the main admin site
     path('admin/credit-dashboard/', admin.site.admin_view(credit_dashboard_view), name='credit_dashboard'),
     path('admin/credit-report/', admin.site.admin_view(credit_report_view), name='credit_report'),
-    path('admin/analytics-dashboard/', admin.site.admin_view(analytics_dashboard_view), name='analytics_dashboard'),
-    path('admin/forecasting-dashboard/', admin.site.admin_view(forecasting_dashboard_view), name='forecasting_dashboard'),
+    # Analytics and forecasting dashboards (disabled)
+    # path('admin/analytics-dashboard/', admin.site.admin_view(analytics_dashboard_view), name='analytics_dashboard'),
+    # path('admin/forecasting-dashboard/', admin.site.admin_view(forecasting_dashboard_view), name='forecasting_dashboard'),
     
     path('admin/', admin.site.urls),
     path('accounts/', include('Accounts.urls')),
-    path('api/tenants/', include('tenants.urls', namespace='api_tenants')),  # Add tenant URLs under /api/ prefix with unique namespace (public endpoints)
+    # path('api/tenants/', include('tenants.urls', namespace='api_tenants')),  # Removed - single tenant
     path('api/', include('Mango_project.api_urls')),  # Include API URLs with Swagger docs
     path('api/accounts/', include('Accounts.urls')),  # Include all Accounts URLs under /api/ as well
-    path('tenants/', include('tenants.urls')),  # Add tenants URLs
+    # path('tenants/', include('tenants.urls')),  # Removed - single tenant
     path('sales_invoice/<int:invoice_id>/pdf/', generate_sales_invoice_pdf, name='generate_sales_invoice_pdf'),
 ]
 

@@ -1269,28 +1269,11 @@ def api_register(request):
             )
             logger.debug(f"User created successfully: {user.id}")
             
-            # Handle tenant
-            try:
-                from tenants.models import Tenant
-                if new_tenant_name:
-                    # Create a new tenant
-                    unique_id = str(hash(f"{username}-{new_tenant_name}"))[:8]
-                    tenant = Tenant.objects.create(
-                        name=new_tenant_name,
-                        tenant_id=f"tenant-{unique_id}"
-                    )
-                    tenant_id = tenant.tenant_id
-                    logger.debug(f"New tenant created: {tenant.tenant_id}")
-            except ImportError:
-                logger.warning("Tenant app not properly configured, skipping tenant creation")
-                pass
-            
             # Return success response
             response_data = {
                 'id': user.id,
                 'username': user.username,
                 'email': user.email,
-                'tenant_id': tenant_id
             }
             logger.debug(f"Registration successful, returning: {json.dumps(response_data)}")
             return Response(response_data, status=201)
@@ -1308,9 +1291,7 @@ def direct_login(request):
     """Direct login endpoint that creates a default user if needed"""
     from django.views.decorators.csrf import csrf_exempt
     from django.contrib.auth.models import User
-    from tenants.models import Tenant, UserProfile
     from rest_framework_simplejwt.tokens import RefreshToken
-    from django_multitenant.utils import set_current_tenant
     import logging
     
     logger = logging.getLogger(__name__)
@@ -1331,46 +1312,6 @@ def direct_login(request):
             admin_user = User.objects.get(username='admin')
             logger.info(f"Using existing admin user: {admin_user.username}")
         
-        # Get or create a default tenant
-        default_tenant = None
-        try:
-            default_tenant = Tenant.objects.first()
-            if not default_tenant:
-                default_tenant = Tenant.objects.create(
-                    name="Default Organization",
-                    slug="default-organization",
-                    business_type='mango'
-                )
-                logger.info(f"Created default tenant: {default_tenant.name}")
-            else:
-                logger.info(f"Using existing tenant: {default_tenant.name}")
-        except Exception as te:
-            logger.error(f"Error handling tenant: {str(te)}")
-            # Create a new tenant if there's an error
-            default_tenant = Tenant.objects.create(
-                name="Default Organization",
-                slug="default-organization",
-                business_type='mango'
-            )
-            logger.info(f"Created fallback tenant: {default_tenant.name}")
-        
-        # Set current tenant for this request
-        set_current_tenant(default_tenant)
-        
-        # Create UserProfile with tenant if it doesn't exist
-        try:
-            profile = UserProfile.objects.get(user=admin_user)
-            logger.info(f"Found existing user profile for admin")
-        except UserProfile.DoesNotExist:
-            try:
-                profile = UserProfile.objects.create(
-                    user=admin_user,
-                    tenant=default_tenant
-                )
-                logger.info(f"Created new user profile for admin")
-            except Exception as pe:
-                logger.error(f"Error creating profile: {str(pe)}")
-        
         # Generate token for the admin user
         refresh = RefreshToken.for_user(admin_user)
         access_token = str(refresh.access_token)
@@ -1383,11 +1324,6 @@ def direct_login(request):
                 "id": admin_user.id,
                 "username": admin_user.username,
                 "email": admin_user.email,
-                "tenant": {
-                    "id": default_tenant.id,
-                    "name": default_tenant.name,
-                    "slug": default_tenant.slug
-                }
             }
         }, status=200)
     except Exception as e:

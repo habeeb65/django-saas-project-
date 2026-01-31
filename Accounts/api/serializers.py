@@ -6,28 +6,8 @@ from Accounts.models import (
     Product,
     Payment
 )
-from tenants.models import Tenant, UserProfile, TenantSettings
 
-class TenantSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Tenant
-        fields = ['id', 'name', 'slug', 'business_type', 'logo', 'primary_color', 'created_at']
-
-class TenantSettingsSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = TenantSettings
-        fields = [
-            'id', 'tenant', 'enable_purchase_management', 'enable_sales_management',
-            'enable_credit_dashboard', 'dashboard_layout'
-        ]
-
-class UserProfileSerializer(serializers.ModelSerializer):
-    username = serializers.CharField(source='user.username', read_only=True)
-    email = serializers.EmailField(source='user.email', read_only=True)
-    
-    class Meta:
-        model = UserProfile
-        fields = ['id', 'username', 'email', 'tenant', 'is_tenant_admin']
+# Removed tenant serializers - single tenant mode
 
 class ProductSerializer(serializers.ModelSerializer):
     class Meta:

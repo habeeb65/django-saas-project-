@@ -186,7 +186,7 @@ class PurchaseInvoiceAdmin(PurchaseInvoiceCSVMixin, ImportExportModelAdmin):
         return [PurchaseProductInline, PaymentInline]
 
     def vendor_name(self, obj):
-        return obj.vendor.name
+        return obj.vendor.name if obj.vendor else "-"
     vendor_name.short_description = "Vendor"
 
     def net_total_display(self, obj):
@@ -684,7 +684,7 @@ class SalesInvoiceAdmin(SalesInvoiceCSVMixin, ImportExportModelAdmin):
     list_filter = ('invoice_date',)
 
     def vendor_name(self, obj):
-        return obj.vendor.name
+        return obj.vendor.name if obj.vendor else "-"
     vendor_name.short_description = "Customer"
 
     def paid_amount_display(self, obj):

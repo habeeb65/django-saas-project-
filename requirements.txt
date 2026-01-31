@@ -4,34 +4,22 @@ djangorestframework==3.15.1
 djangorestframework-simplejwt==5.3.1
 django-cors-headers==4.3.1
 django-jazzmin==3.0.1
-django-otp==1.2.2
-django-two-factor-auth==1.15.3
-django-filter==23.5  # Required for API filtering
-django-admin-tools==0.9.3  # Using latest version instead of 0.13.0
+django-filter==23.5
 
-# Multi-tenant and data presentation
-django-multitenant==2.3.0
+# Data presentation
+# django-multitenant==2.3.0  # Removed - single tenant mode
+# django-tenants==3.8.0  # Removed - single tenant mode
 django-bootstrap5==23.3
 django-import-export==4.3.7
 
 # Database connectors
 psycopg2-binary==2.9.10
-mysqlclient==2.2.7
 
-# Data visualization and analytics
-matplotlib==3.8.2
-numpy==1.26.4
-pandas==2.0.3
-scipy==1.12.0
-scikit-learn==1.3.0
-
-# Excel and reporting
+# Excel and reporting (kept for import/export)
 xlsxwriter==3.1.9
 openpyxl==3.1.2
 reportlab==4.3.1
 xhtml2pdf==0.2.17
-pyHanko==0.26.0
-pypdf==5.4.0
 
 # PDF and document handling
 pillow==10.0.0
@@ -44,32 +32,3 @@ python-dotenv==1.1.0
 requests==2.32.3
 PyYAML==6.0.2
 tablib==3.8.0
-redis==6.1.0
-
-# Security
-cryptography==44.0.2
-service-identity==24.2.0
-pyopenssl==25.1.0
-
-# Other dependencies
-asgiref==3.8.1
-certifi==2025.1.31
-chardet==5.2.0
-charset-normalizer==3.4.1
-click==8.1.8
-colorama==0.4.6
-cssselect2==0.8.0
-defusedxml==0.7.1
-html5lib==1.1
-idna==3.10
-lxml==5.3.1
-pycparser==2.22
-six==1.17.0
-sqlparse==0.5.3
-svglib==1.5.1
-tinycss2==1.4.0
-tzdata==2025.2
-tzlocal==5.3.1
-uritools==4.0.3
-urllib3==2.3.0
-webencodings==0.5.1

@@ -4,25 +4,12 @@ from decimal import Decimal, ROUND_HALF_UP
 from django.core.exceptions import ValidationError
 from django.db.models import Sum
 from django.contrib.auth.models import User
-from django_multitenant.mixins import TenantModelMixin
-from django_multitenant.models import TenantManagerMixin
-from tenants.models import Tenant
 
-# Create tenant manager
-class TenantManager(TenantManagerMixin, models.Manager):
-    pass
 
-class PurchaseVendor(TenantModelMixin, models.Model):
-    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
-    tenant_id = 'tenant_id'
-    name = models.CharField(max_length=100)
+class PurchaseVendor(models.Model):
+    name = models.CharField(max_length=100, unique=True)
     contact_number = models.CharField(max_length=15)
     area = models.CharField(max_length=100)
-
-    objects = TenantManager()
-    
-    class Meta:
-        unique_together = (('tenant', 'name'),)
 
     def __str__(self):
         return self.name
@@ -37,15 +24,12 @@ class Payment(models.Model):
     invoice = models.ForeignKey('PurchaseInvoice', on_delete=models.CASCADE, related_name='payments')
     amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     date = models.DateField(default=date.today)
-    # New field: Payment mode as a drop-down
     payment_mode = models.CharField(
         max_length=20,
         choices=PAYMENT_METHOD_CHOICES,
-        default='cash',  # You can set a default or remove default if needed
+        default='cash',
         verbose_name="Payment Method"
     )
-    
-    # New field: Attachment for screenshot/reference
     attachment = models.FileField(
         upload_to='payment_attachments/', 
         blank=True, 
@@ -55,20 +39,14 @@ class Payment(models.Model):
 
     def clean(self):
         invoice = self.invoice
-        # Calculate the total of all payments for this invoice excluding the current instance if it exists.
         if self.pk:
-            # Existing payment: exclude self from the total.
             current_total = invoice.payments.exclude(pk=self.pk).aggregate(total=Sum('amount'))['total'] or Decimal('0')
         else:
-            # New payment: there is no current value.
             current_total = Decimal('0')
             
-        # Calculate what the new total would be after this payment is added/updated.
         new_total = current_total + self.amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        
         net_total_after_cash_cutting = invoice.net_total_after_cash_cutting
 
-        # Only validate if net_total_after_cash_cutting is meaningful (> 0.01)
         if net_total_after_cash_cutting > Decimal('0.01') and new_total > net_total_after_cash_cutting:
             raise ValidationError(
                 f"Total payment cannot exceed the net total after 2% cash cutting: ₹{net_total_after_cash_cutting}."
@@ -82,11 +60,9 @@ class Payment(models.Model):
         return f"Payment of ₹{self.amount} for Invoice {self.invoice.invoice_number}"
 
 
-class PurchaseInvoice(TenantModelMixin, models.Model):
-    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, null=True)
-    tenant_id = 'tenant_id'
-    invoice_number = models.CharField(max_length=20, editable=False)
-    lot_number = models.CharField(max_length=10, editable=False)
+class PurchaseInvoice(models.Model):
+    invoice_number = models.CharField(max_length=20, editable=False, unique=True)
+    lot_number = models.CharField(max_length=10, editable=False, unique=True)
     date = models.DateField(default=date.today)
     vendor = models.ForeignKey('PurchaseVendor', on_delete=models.CASCADE, related_name='invoices')
     net_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -97,29 +73,22 @@ class PurchaseInvoice(TenantModelMixin, models.Model):
         null=True
     )
     
-    objects = TenantManager()
-    
     class Meta:
-        verbose_name = "Lot"
-        verbose_name = "Purchase Invoice"  # Singular name
-        verbose_name_plural = "Purchase Invoices"  # Plural name
-        unique_together = (('tenant', 'invoice_number'), ('tenant', 'lot_number'))
+        verbose_name = "Purchase Invoice"
+        verbose_name_plural = "Purchase Invoices"
 
     def save(self, *args, **kwargs):
-        # --- Generate invoice_number if not set (only for new objects) ---
         if not self.invoice_number and self.pk is None:
             last_invoice = PurchaseInvoice.objects.order_by("-id").first()
             if last_invoice and last_invoice.invoice_number:
                 try:
-                    # Extract the last two digits and increment
                     last_number = int(last_invoice.invoice_number[-2:])
                 except ValueError:
                     last_number = 0
                 self.invoice_number = f"MS2025R{last_number + 1:02d}"
             else:
-                self.invoice_number = "MS2025R01"  # Default starting number
+                self.invoice_number = "MS2025R01"
 
-        # --- Generate lot_number if not set (only for new objects) ---
         if not self.lot_number and self.pk is None:
             last_lot = PurchaseInvoice.objects.order_by("-id").first()
             if last_lot and last_lot.lot_number:
@@ -129,37 +98,28 @@ class PurchaseInvoice(TenantModelMixin, models.Model):
                     last_lot_number = 0
                 self.lot_number = f"LOT-{last_lot_number + 1:02d}"
             else:
-                self.lot_number = "LOT-01"  # Default starting lot number
+                self.lot_number = "LOT-01"
 
-        # Only update net_total if it's a new instance or update_fields excludes net_total
         update_total = True
         if 'update_fields' in kwargs and kwargs['update_fields'] is not None:
             update_total = 'net_total' not in kwargs['update_fields']
 
-        # First save to ensure instance has a primary key
         super().save(*args, **kwargs)
 
-        # Update net_total if needed (not during a field-specific update that includes net_total)
         if update_total and self.pk:
             calculated_total = sum(product.total for product in self.purchase_products.all())
             if self.net_total != calculated_total:
                 self.net_total = calculated_total
-                # Update only the net_total field without triggering full save again
                 type(self).objects.filter(pk=self.pk).update(net_total=calculated_total)
 
     @property
     def available_quantity(self):
-        # Existing purchased quantity
         total_purchased = sum(product.quantity for product in self.purchase_products.all())
-        
-        # Sum of quantities used in ALL sales invoices
         total_used = self.sales_lots.aggregate(total=Sum('quantity'))['total'] or Decimal('0.00')
-        
         return total_purchased - total_used      
 
     @property
     def net_total_after_cash_cutting(self):
-        # Calculate net total after deducting 2%
         return round(self.net_total - (self.net_total * Decimal('0.02')), 2)
 
     @property
@@ -169,22 +129,9 @@ class PurchaseInvoice(TenantModelMixin, models.Model):
     @property
     def due_amount(self):
         return round(self.net_total_after_cash_cutting - self.paid_amount, 2)
-    
-    #@property
-    # def available_quantity(self):
-    #     # Sum of quantities purchased from all products in this invoice.
-    #     total_purchased = sum(product.quantity for product in self.purchase_products.all())
-    #     # Sum of quantities already sold from this lot in all sales invoices.
-    #     total_sold = self.sales_invoices.aggregate(total=Sum('lot_quantity'))['total'] or 0
-    #     return total_purchased - total_sold
 
     def __str__(self):
-        return (
-            #f"Invoice {self.invoice_number} - Net Total: ₹{self.net_total}, "
-            #f"Net Total After Cash Cutting: ₹{self.net_total_after_cash_cutting}, "
-            #f"Paid Amount: ₹{self.paid_amount}, Due Amount: ₹{self.due_amount}"
-            f" {self.lot_number} (Invoice {self.invoice_number})"
-        )
+        return f" {self.lot_number} (Invoice {self.invoice_number})"
 
     def get_product_quantities(self):
         products = {}
@@ -196,6 +143,7 @@ class PurchaseInvoice(TenantModelMixin, models.Model):
             available = purchase_product.quantity - sold
             products[purchase_product.product.name] = available
         return products
+
 
 class Purchase(models.Model):
     invoice = models.OneToOneField(PurchaseInvoice, on_delete=models.CASCADE, related_name='purchase_invoice')
@@ -209,15 +157,8 @@ class Purchase(models.Model):
         return f"Purchase for Invoice {self.invoice.invoice_number}"
 
 
-class Product(TenantModelMixin, models.Model):
-    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
-    tenant_id = 'tenant_id'
-    name = models.CharField(max_length=100)
-    
-    objects = TenantManager()
-    
-    class Meta:
-        unique_together = (('tenant', 'name'),)
+class Product(models.Model):
+    name = models.CharField(max_length=100, unique=True)
 
     def __str__(self):
         return self.name
@@ -226,95 +167,54 @@ class Product(TenantModelMixin, models.Model):
 class PurchaseProduct(models.Model):
     invoice = models.ForeignKey(PurchaseInvoice, on_delete=models.CASCADE, related_name='purchase_products')
     product = models.ForeignKey(Product, on_delete=models.CASCADE)
-    serial_number = models.IntegerField(default=0, editable=False)  # Make it non-editable
+    serial_number = models.IntegerField(default=0, editable=False)
     quantity = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     damage = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Damage (Kg)")
     discount = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Discount (%)")
     rotten = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Rotten (Kg)")
     total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    loading_unloading = models.DecimalField(max_digits=10, decimal_places=2, default=0)  # Add this
+    loading_unloading = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
     def save(self, *args, **kwargs):
-        print(f"--- Calculating PurchaseProduct --- ID: {self.pk}") # DEBUG
-        print(f"Input -> Qty: {self.quantity}, Price: {self.price}, Dmg: {self.damage}, Disc: {self.discount}, Rotten: {self.rotten}") # DEBUG
-    # Auto-generate serial_number if not set (only for new objects)
         if not self.serial_number or self.serial_number == 0:
-            # Get all existing products for this invoice and renumber them in sequence
             existing_products = PurchaseProduct.objects.filter(invoice=self.invoice).order_by('id')
-
-            # Determine the next serial number
             if existing_products.exists():
-                # Find the highest existing serial number
                 max_serial = existing_products.aggregate(models.Max('serial_number'))['serial_number__max'] or 0
                 self.serial_number = max_serial + 1
             else:
-                self.serial_number = 1  # Start from 1 for the first product in the invoice
+                self.serial_number = 1
 
-        # 1. Calculate physical quantity after damage and rotten
         physical_quantity = self.quantity - self.damage - self.rotten
         physical_quantity = max(physical_quantity, Decimal('0.00'))
-        print(f"Step 1 -> Physical Qty: {physical_quantity}") # DEBUG
-
-        # 2. Calculate the base price for the physical quantity
         base_price_total = physical_quantity * self.price
-        print(f"Step 2 -> Base Price Total: {base_price_total}") # DEBUG
-
-        # 3. Calculate discount amount based on the base price
         discount_amount = (base_price_total * self.discount) / 100
-        print(f"Step 3 -> Discount Amount: {discount_amount}") # DEBUG
-
-        # 4. Calculate price after discount
         price_after_discount = base_price_total - discount_amount
-        print(f"Step 4 -> Price After Discount: {price_after_discount}") # DEBUG
 
-        # 5. Calculate loading/unloading cost based on Product Name
-        # Accessing product name requires the related object to be loaded
-        # Ensure product is loaded, handle potential DoesNotExist if needed (though FK implies it should exist)
         try:
             product_name = self.product.name
         except Product.DoesNotExist:
-            product_name = "" # Should not happen with ForeignKey
+            product_name = ""
 
         if product_name == "Rotten":
-            # If Product Name is 'Rotten', loading/unloading cost is zero
-            print(f"Step 5 -> Product is '{product_name}', setting loading_unloading to 0") # DEBUG
             self.loading_unloading = Decimal('0.00')
         else:
-            # For all other products, calculate loading/unloading based on the *original* quantity
-            print(f"Step 5 -> Product is '{product_name}', calculating loading_unloading") # DEBUG
             self.loading_unloading = Decimal(self.quantity) * Decimal('0.40')
-            print(f"Step 5 -> Final loading_unloading: {self.loading_unloading}") # DEBUG
 
-        # 6. Calculate final total: Price after discount - loading/unloading cost
         self.total = price_after_discount - self.loading_unloading
-        print(f"Step 6 -> Final Total before min check: {self.total}") # DEBUG
-
-        # Ensure total is never zero or negative
         if self.total <= 0:
-            self.total = Decimal('0.01')  # Set a minimum value
-            print(f"Step 7 -> Adjusted Total to minimum: {self.total}") # DEBUG
-        else:
-            print(f"Step 7 -> Final Total: {self.total}") # DEBUG
+            self.total = Decimal('0.01')
 
-        print("--- Calculation Finished --- ") # DEBUG
-
-        # Save the purchase product with calculated values
         super().save(*args, **kwargs)
 
-        # Update the parent invoice's net_total by triggering a calculation
-        # But only if we're not in the middle of a bulk update or creation
         if self.invoice and self.invoice.pk:
             calculated_total = sum(product.total for product in self.invoice.purchase_products.all())
             if self.invoice.net_total != calculated_total:
-                # Use direct update to avoid recursive saves
                 PurchaseInvoice.objects.filter(pk=self.invoice.pk).update(net_total=calculated_total)
 
-        # After saving, resequence all the serial numbers if needed
         self.resequence_serial_numbers()
 
     def resequence_serial_numbers(self):
-        """Ensure all products in the same invoice have sequential serial numbers"""
         products = PurchaseProduct.objects.filter(invoice=self.invoice).order_by('id')
         for i, product in enumerate(products, start=1):
             if product.serial_number != i:
@@ -324,58 +224,30 @@ class PurchaseProduct(models.Model):
         return f"{self.serial_number}. {self.product.name} in Invoice {self.invoice.invoice_number}"
 
 
-class SalesInvoice(TenantModelMixin, models.Model):
-    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
-    tenant_id = 'tenant_id'
-    invoice_number = models.CharField(max_length=20, editable=False)
+class SalesInvoice(models.Model):
+    invoice_number = models.CharField(max_length=20, editable=False, unique=True)
     invoice_date = models.DateField(default=date.today)
     vendor = models.ForeignKey('Customer', on_delete=models.PROTECT, related_name='sales_invoices')
-    
     lots = models.ManyToManyField(
         'PurchaseInvoice',
         through='SalesLot',
         verbose_name="Lots Used",
         help_text="Select multiple lots and specify quantities used"
     )
-    # Lot info from a Purchase Invoice.
-    # This field lets you select a lot (from a purchase invoice) for sale.
-    #lot = models.ForeignKey(
-    #     'PurchaseInvoice',
-    #     on_delete=models.SET_NULL,
-    #     related_name='sales_invoices',
-    #     blank=True,
-    #     null=True,
-    #     help_text="Select a lot from a Purchase Invoice. (When used, mark as Sold.)"
-    # )
-    
-    # Record how much (in weight) from the lot is used for this sale.
-    # lot_quantity = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True,
-    #                                    help_text="Quantity (in kgs) used from the selected lot.")
-    
     vehicle_number = models.CharField(max_length=50, blank=True, null=True)
     gross_vehicle_weight = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True,
                                                help_text="In Kilograms")
     reference = models.CharField(max_length=200, blank=True, null=True)
-    
-    # Crate information - outgoing
     no_of_crates = models.DecimalField(max_digits=10, decimal_places=2, default=0, blank=True, null=True,
                                       verbose_name="No of Crates")
     cost_per_crate = models.DecimalField(max_digits=10, decimal_places=2, default=0, blank=True, null=True,
                                         verbose_name="Packaging cost per crate (₹)")
-
-    # Crate information - incoming
     purchased_crates_quantity = models.DecimalField(max_digits=10, decimal_places=2, default=0, blank=True, null=True,
                                                   verbose_name="No of Purchased Crates")
     purchased_crates_unit_price = models.DecimalField(max_digits=10, decimal_places=2, default=0, blank=True, null=True,
                                                     verbose_name="Purchased price per crate (₹)")
     
-    objects = TenantManager()
-    
-    class Meta:
-        unique_together = (('tenant', 'invoice_number'),)
-    
     def save(self, *args, **kwargs):
-        # Auto-generate invoice number if not set.
         if not self.invoice_number and self.pk is None:
             last_invoice = SalesInvoice.objects.order_by("-id").first()
             if last_invoice and last_invoice.invoice_number:
@@ -388,64 +260,45 @@ class SalesInvoice(TenantModelMixin, models.Model):
                 self.invoice_number = "SA2025S01"
         super().save(*args, **kwargs)
     
-    # Computed properties for totals:
     @property
     def total_gross_weight(self):
-        """Sum of gross weights of all sales products."""
         total = self.sales_products.aggregate(total=models.Sum('gross_weight'))['total'] or Decimal('0.00')
         return total
     
     @property
     def net_total(self):
-        """Sum of all line item totals."""
         total = self.sales_products.aggregate(total=models.Sum('total'))['total'] or Decimal('0.00')
         return total
     
     @property
     def net_total_after_commission(self):
-        """
-        Net Total After Commission = Net Total + Total Gross Weight
-        (For example, commission might be structured as a fixed addition per kg.)
-        """
         return self.net_total + self.total_gross_weight
     
     @property
     def packaging_total(self):
-        """Total packaging cost = no of crates * packaging cost per crate."""
-        # Check if both no_of_crates and cost_per_crate are not None
         if self.no_of_crates is not None and self.cost_per_crate is not None:
-            # Return the total cost by multiplying no_of_crates and cost_per_crate
             return Decimal(self.no_of_crates) * self.cost_per_crate
-        # Return 0.00 if either no_of_crates or cost_per_crate is None
         return Decimal('0.00')
     
     @property
     def purchased_crates_total(self):
-        """Calculated Purchased crates total = No of Purchased Crates * Purchased price per crate."""
         if self.purchased_crates_quantity is not None and self.purchased_crates_unit_price is not None:
             return (Decimal(self.purchased_crates_quantity) * self.purchased_crates_unit_price).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        return Decimal('0.00') # Return 0 if quantity or price is missing
+        return Decimal('0.00')
 
     @property
     def net_total_after_packaging(self):
-        """
-        Final invoice total = Net Total After Commission + Total packaging cost + Purchased crates total.
-        """
-        # Ensure this still ADDS the calculated purchased_crates_total
         return self.net_total_after_commission + self.packaging_total + self.purchased_crates_total
     
     @property
     def paid_amount(self):
-        """Sum of all related payments"""
         return self.payments.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
 
     @property
     def due_amount(self):
-        """Remaining balance"""
         return self.net_total_after_packaging - self.paid_amount
 
     def payment_status(self):
-        """Payment status indicator"""
         if self.due_amount == 0:
             return "Paid"
         elif self.paid_amount == 0:
@@ -456,44 +309,18 @@ class SalesInvoice(TenantModelMixin, models.Model):
         return f"Sales Invoice {self.invoice_number} for {self.vendor}"
 
 
-# -------------------------------------------
-# Sales Product Model (Line Items)
-# -------------------------------------------
 class SalesProduct(models.Model):
     invoice = models.ForeignKey(SalesInvoice, on_delete=models.CASCADE, related_name='sales_products')
-    serial_number = models.IntegerField(editable=False)  # Auto-incremented within the invoice
+    serial_number = models.IntegerField(editable=False)
     product = models.ForeignKey('Product', on_delete=models.CASCADE)
-    
-    # We store the weights in kilograms
     gross_weight = models.DecimalField(max_digits=12, decimal_places=2, help_text="Gross Weight in Kgs")
-    discount = models.DecimalField(max_digits=5, decimal_places=2, default=0,
-                                   help_text="Discount as percentage")
-    rotten = models.DecimalField(max_digits=12, decimal_places=2, default=0,
-                                 help_text="Rotten weight in Kgs")
-    # These fields are computed:
+    discount = models.DecimalField(max_digits=5, decimal_places=2, default=0, help_text="Discount as percentage")
+    rotten = models.DecimalField(max_digits=12, decimal_places=2, default=0, help_text="Rotten weight in Kgs")
     net_weight = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True,
                                      help_text="Net Weight in Kgs after discount & rotten deduction")
     price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True,
                                 help_text="Total = Net Weight * Price")
-    
-    def save(self, *args, **kwargs):
-        # Auto-generate serial_number if not set.
-        if not self.serial_number:
-            last_item = SalesProduct.objects.filter(invoice=self.invoice).order_by('-serial_number').first()
-            self.serial_number = last_item.serial_number + 1 if last_item else 1
-        
-        # Calculate net_weight:
-        # net_weight = gross_weight - (gross_weight * discount/100) - rotten
-        self.net_weight = self.gross_weight - ((self.gross_weight * self.discount) / Decimal('100.00')) - self.rotten
-        # Calculate total:
-        self.total = (self.net_weight * self.price)
-        
-        super().save(*args, **kwargs)
-    
-    def __str__(self):
-        return f"{self.serial_number}. {self.product.name} in Invoice {self.invoice.invoice_number}"
-
     lot = models.ForeignKey(
         'SalesLot',
         on_delete=models.SET_NULL,
@@ -501,9 +328,21 @@ class SalesProduct(models.Model):
         null=True,
         help_text="Link to specific lot usage"
     )
-# -------------------------------------------
-# Sales Payment Model
-# -------------------------------------------
+    
+    def save(self, *args, **kwargs):
+        if not self.serial_number:
+            last_item = SalesProduct.objects.filter(invoice=self.invoice).order_by('-serial_number').first()
+            self.serial_number = last_item.serial_number + 1 if last_item else 1
+        
+        self.net_weight = self.gross_weight - ((self.gross_weight * self.discount) / Decimal('100.00')) - self.rotten
+        self.total = (self.net_weight * self.price)
+        
+        super().save(*args, **kwargs)
+    
+    def __str__(self):
+        return f"{self.serial_number}. {self.product.name} in Invoice {self.invoice.invoice_number}"
+
+
 class SalesPayment(models.Model):
     PAYMENT_METHOD_CHOICES = [
         ('account_pay', 'Account Pay'),
@@ -530,10 +369,9 @@ class SalesPayment(models.Model):
     def __str__(self):
         return f"Payment of ₹{self.amount} for Sales Invoice {self.invoice.invoice_number}"
     
-class Customer(TenantModelMixin, models.Model):
-    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
-    tenant_id = 'tenant_id'
-    name = models.CharField(max_length=100)
+
+class Customer(models.Model):
+    name = models.CharField(max_length=100, unique=True)
     contact_number = models.CharField(max_length=15, blank=True, null=True)
     address = models.TextField(blank=True, null=True)
     credit_limit = models.DecimalField(
@@ -543,29 +381,21 @@ class Customer(TenantModelMixin, models.Model):
         help_text="Maximum credit limit allowed (0 means no specific limit)"
     )
     
-    objects = TenantManager()
-    
-    class Meta:
-        unique_together = (('tenant', 'name'),)
-    
     def __str__(self):
         return self.name
     
     @property
     def total_due(self):
-        """Calculate total outstanding balance for this customer"""
         return sum(invoice.due_amount for invoice in self.sales_invoices.all())
         
     @property
     def is_over_credit_limit(self):
-        """Check if customer has exceeded their credit limit"""
-        if self.credit_limit <= 0:  # 0 or negative means no specific limit
+        if self.credit_limit <= 0:
             return False
         return self.total_due > self.credit_limit
     
     @property
     def credit_status(self):
-        """Return credit status as a string"""
         if not self.credit_limit or self.credit_limit <= 0:
             return "No Limit Set"
         
@@ -578,9 +408,8 @@ class Customer(TenantModelMixin, models.Model):
         else:
             return "Within Limit"
 
-class Expense(TenantModelMixin, models.Model):
-    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
-    tenant_id = 'tenant_id'
+
+class Expense(models.Model):
     date = models.DateField()
     paid_by = models.CharField(max_length=100)
     paid_to = models.CharField(max_length=100)
@@ -590,14 +419,11 @@ class Expense(TenantModelMixin, models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     
-    objects = TenantManager()
-    
     def __str__(self):
         return f"{self.date} - {self.paid_to} - ₹{self.amount}"
 
-class Damages(TenantModelMixin, models.Model):
-    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
-    tenant_id = 'tenant_id'
+
+class Damages(models.Model):
     date = models.DateField()
     name = models.CharField(max_length=100)
     due_to = models.CharField(max_length=100)
@@ -607,18 +433,16 @@ class Damages(TenantModelMixin, models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     
-    objects = TenantManager()
-    
     def __str__(self):
         return f"{self.date} - {self.due_to} - ₹{self.amount_loss}"
-    class Meta:
-        verbose_name = "Damage"  # Singular form
-        verbose_name_plural = "Damages"  # Explicitly set plural name
 
-class SalesLot(TenantModelMixin, models.Model):
+    class Meta:
+        verbose_name = "Damage"
+        verbose_name_plural = "Damages"
+
+
+class SalesLot(models.Model):
     """Tracks which lots (from purchase invoices) are used in a sales invoice"""
-    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
-    tenant_id = 'tenant_id'
     sales_invoice = models.ForeignKey(
         'SalesInvoice', 
         on_delete=models.CASCADE,
@@ -636,10 +460,8 @@ class SalesLot(TenantModelMixin, models.Model):
         help_text="Quantity used from this lot (in kgs)"
     )
 
-    objects = TenantManager()
-
     class Meta:
-        unique_together = ('tenant', 'sales_invoice', 'purchase_invoice')  # Prevent duplicates
+        unique_together = ('sales_invoice', 'purchase_invoice')
 
     def __str__(self):
         return f"{self.quantity}kg from {self.purchase_invoice.lot_number}"
@@ -647,41 +469,31 @@ class SalesLot(TenantModelMixin, models.Model):
     def clean(self):
         super().clean()
         
-        # Skip validation if we're editing an existing record and not changing the quantity
         if self.pk and hasattr(self, '_loaded_quantity') and self.quantity == self._loaded_quantity:
             return
         
-        # Skip validation completely if purchase_invoice is not selected yet
         if not self.purchase_invoice:
             return
             
-        # Skip quantity validation if not provided yet
         if self.quantity is None:
             return
 
-        # Check available quantity - only for new records or edited quantities
         if self.purchase_invoice.available_quantity is not None:
-            # For existing records being edited, account for the current allocation
             if self.pk:
                 from django.db.models import F
-                # Get the original record from the database
                 original = type(self).objects.get(pk=self.pk)
-                # Only validate if the new quantity is greater than the original
                 if self.quantity > original.quantity + self.purchase_invoice.available_quantity:
                     raise ValidationError(
                         f"Only {original.quantity + self.purchase_invoice.available_quantity}kg available in {self.purchase_invoice.lot_number}"
                     )
-            # For new records
             elif self.quantity > self.purchase_invoice.available_quantity:
                 raise ValidationError(
                     f"Only {self.purchase_invoice.available_quantity}kg available in {self.purchase_invoice.lot_number}"
                 )
 
-        # Skip product check if SalesInvoice is unsaved (no primary key)
         if not hasattr(self, 'sales_invoice') or not self.sales_invoice or not self.sales_invoice.pk:
-            return  # Skip validation until parent is saved
+            return
 
-        # Check product consistency (only after SalesInvoice is saved)
         sales_products = self.sales_invoice.sales_products.all()
         if sales_products.exists():
             sales_product = sales_products.first().product
@@ -692,26 +504,17 @@ class SalesLot(TenantModelMixin, models.Model):
                 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Store the original quantity when the instance is loaded from the database
         if self.pk and hasattr(self, 'quantity'):
             self._loaded_quantity = self.quantity
 
-class Packaging_Invoice(TenantModelMixin, models.Model):
-    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
-    tenant_id = 'tenant_id'
+
+class Packaging_Invoice(models.Model):
     no_of_crates = models.IntegerField(blank=True, null=True, verbose_name="No of Crates")
     cost_per_crate = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True,
                                         verbose_name="Packaging cost per crate (₹)")
-    
-    objects = TenantManager()
 
     @property
     def packaging_total(self):
-        """Total packaging cost = no of crates * packaging cost per crate."""
-        # Check if both no_of_crates and cost_per_crate are not None
         if self.no_of_crates is not None and self.cost_per_crate is not None:
-            # Return the total cost by multiplying no_of_crates and cost_per_crate
             return Decimal(self.no_of_crates) * self.cost_per_crate
-        # Return 0.00 if either no_of_crates or cost_per_crate is None
         return Decimal('0.00')
-

@@ -72,10 +72,10 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'corsheaders',
     'import_export',
-    'tenants',
-    'notifications.apps.NotificationsConfig',
-    'analytics.apps.AnalyticsConfig',
-    'forecasting.apps.ForecastingConfig',
+    # 'tenants',  # Removed - single tenant mode
+    # 'notifications.apps.NotificationsConfig',  # Removed - depends on tenants
+    # 'analytics.apps.AnalyticsConfig',  # Removed - not essential
+    # 'forecasting.apps.ForecastingConfig',  # Removed - not essential
     # API Documentation
     # 'drf_yasg',  # Commented out to avoid dependency
     # Security enhancements
@@ -89,7 +89,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    'tenants.middleware.TenantMiddleware',
+    # 'tenants.middleware.TenantMiddleware',  # Removed - single tenant
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
@@ -411,11 +411,11 @@ TENANT_EXEMPT_URLS = [
     '',  # Root URL
 ]
 
-# Add tenant-aware authentication backend
+# Add authentication backend
 AUTHENTICATION_BACKENDS = [
-    'tenants.backends.TenantAwareBackend',
+    # 'tenants.backends.TenantAwareBackend',  # Removed - single tenant
     'django.contrib.auth.backends.ModelBackend',
 ]
 
-# django-tenants required settings
-TENANT_MODEL = 'tenants.Tenant'
+# Multi-tenant settings removed - single tenant mode
+# TENANT_MODEL = 'tenants.Tenant'
